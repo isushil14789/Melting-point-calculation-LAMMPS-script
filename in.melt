@@ -1,0 +1,134 @@
+#============================================================================
+#									    
+#       LAMMPS script  :  Calculating meting point using the coexistence method
+#								            
+#============================================================================
+clear
+
+dimension	3 
+boundary        p p p
+units		metal
+
+atom_style	atomic
+
+variable a_param equal 2.8665
+
+variable a equal ${a_param}
+
+variable xdim equal 18
+variable ydim equal 18
+#variable zdim equal 160
+#variable zdim_sol equal ${zdim}/2.0
+
+
+#============================================================================
+#									    #
+#                            Initial simulation setup			    #
+#								            #
+#============================================================================
+
+lattice bcc ${a} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+region		box block 0 ${xdim} 0 ${ydim} 0 120
+create_box	1 box
+create_atoms 	1 region box
+
+region		liq1 block  0 ${xdim} 0 ${ydim} 0 30
+region		sol  block 0 ${xdim} 0 ${ydim} 30 90  
+region		liq2 block  0 ${xdim} 0 ${ydim} 90 120 
+		
+group		lq1 region liq1 
+group		sl region sol
+group		lq2 region liq2
+group   lq_all union lq1 lq2
+
+
+pair_style	eam/fs            
+pair_coeff	* * Fe_5.eam.fs Fe
+
+neighbor	2.0 bin
+neigh_modify	every 1 delay 0 check yes
+
+#============================================================================
+#									    #
+#                Initial Equilibration 					    #
+#								            #
+#============================================================================
+
+reset_timestep	0 
+timestep	0.001
+
+fix		7 all box/relax iso 0.0 vmax 0.001
+ 
+min_style	cg
+min_modify	dmax 0.1 
+minimize	1.0e-25 1.0e-20 5000 10000
+
+unfix		7
+
+#============================================================================
+#									    #
+#                System Temperature Initialization		            #
+#								            #
+#============================================================================
+
+velocity	all create 100 481516
+
+fix 1 all npt temp  100 300 2 aniso 0.0 0.0 2 drag 1.0
+thermo 100
+thermo_style custom step pe lx ly lz press pxx pyy pzz temp 
+run		200000
+unfix		1
+
+fix 1 all npt temp  300 1750 2 aniso 0.0 0.0 2 drag 1.0
+dump 1 all custom 50000 dump.r1820.* id type fx fy fz vx vy vz
+thermo 100
+thermo_style custom step pe lx ly lz press pxx pyy pzz temp 
+run		350000
+unfix		1
+undump 1
+
+#============================================================================
+#									    #
+#                 Liquid Temperature Initialization		            #
+#								            #
+#============================================================================
+#####################-NPT#####################################################
+velocity sl scale 1750 units box
+velocity	lq_all create 2000 481516 
+
+fix 1 lq_all npt temp  2000 2000 2.0 aniso 0.0 0.0 2.0 drag 1.0
+dump 1 all custom 50000 dump.lq1npt.* id type x y z fx fy fz vx vy vz
+thermo 1000
+thermo_style custom step pe lx ly lz press pxx pyy pzz temp 
+run 300000
+unfix		1
+undump 		1
+
+#============================================================================
+#									    #
+#                Constant area NPAzT Equilibration			    #
+#============================================================================
+velocity sl scale 1750 units box
+fix 1 lq_all npt temp  2000 1820 2.0 aniso 0.0 0.0 2.0 drag 1.0 
+thermo 100
+thermo_style custom step pe lx ly lz press pxx pyy pzz temp
+dump 8 all custom 10000 dump.lq1820.* id type x y z fx fy fz vx vy vz
+run 300000
+unfix 1
+undump 8
+
+fix 1 all npt temp  1820 1820 2.0 aniso 0.0 0.0 2.0 drag 1.0 
+thermo 100
+thermo_style custom step pe lx ly lz press pxx pyy pzz temp
+variable	step_present equal step
+variable	T_present equal temp
+variable	P_present equal press
+variable	PE_present equal pe
+variable	E_present equal etotal
+fix def1 all print 100 "${step_present} ${T_present} ${P_present} ${PE_present} ${E_present}" file melting.dat screen no
+dump 8 all custom 10000 dump.eq1820.* id type x y z fx fy fz vx vy vz
+run 800000
+unfix 1
+undump 8
+
+write_restart coext_01.data  
